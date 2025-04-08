@@ -32,4 +32,14 @@ from datetime import datetime
 下载好所需的库后，可以到AI Web Chat.py里配置一下，若不想使用IPV6那就注释掉留下最后一句改一下缩进就可以使用ipv4了，index.html中有两张是壁纸，其中有参数为ipv6你可以自行更改。
 
 更改你想要的端口，直接运行即可。
+
+
+注意：要自己下载deepseek r1：1.5b,7b,8b,14b模型，若你用的不是，要在前后端都进行更改！
+
+ollama模型下载命令：
+ollama run deepseek-r1:1.5b
+ollama run deepseek-r1:7b
+ollama run deepseek-r1:8b
+ollama run deepseek-r1:14b
+无限制版本根据名字去下载
 """
