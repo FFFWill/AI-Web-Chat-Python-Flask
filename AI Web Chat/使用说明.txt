@@ -1,0 +1,35 @@
+# -*- coding: utf-8 -*-
+# @Author: FWill
+# @Time: 2025-04-08 19:00
+# @File: AI web chat.py
+# @Description: This code uses the flask library to implement a multifunctional AI conversation on a web page.
+
+"""
+Flask服务端程序，集成ollama大模型、知识库查询、函数执行、文件上传等功能
+支持流式响应、对话历史记录、生成中断等特性
+"""
+#pip insatll xxxx
+
+from flask import Flask, request, jsonify, Response, render_template
+
+import ollama  # 大模型客户端库
+
+import os, re, time, datetime, codecs, logging  # 系统/工具库
+
+from threading import Lock  # 线程锁
+
+import subprocess  # 子进程管理
+
+from datetime import datetime
+
+"""
+此处说明如何使用：首先得下载一个Ollama，没下载的，可以让好兄弟直接复制C盘下的用户名下的用户名下的.ollama文件夹,以及C盘下的用户名下的AppData下的Local文件夹下的Programs文件夹下的Ollama文件夹.
+将这两个文件夹剪切到某盘（你希望的盘）的Ollama文件夹里(其中一个文件夹装有manifests文件夹与blobs文件夹，将这个文件夹改名成models).
+在Windows环境变量里添加两个变量，一个是直接在系统变量里新增一个变量名为“OLLAMA_MODELS”值为“某盘:\Ollama\models”.
+另一个在系统变量中的Path，点开，新增一个“某盘:\Ollama\Ollama”
+
+改好后每次cmd启动ollama就可以直接输入ollama list
+下载好所需的库后，可以到AI Web Chat.py里配置一下，若不想使用IPV6那就注释掉留下最后一句改一下缩进就可以使用ipv4了，index.html中有两张是壁纸，其中有参数为ipv6你可以自行更改。
+
+更改你想要的端口，直接运行即可。
+"""
