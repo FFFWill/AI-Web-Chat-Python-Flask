@@ -41,6 +41,9 @@ ollama run deepseek-r1:1.5b
 ollama run deepseek-r1:7b
 ollama run deepseek-r1:8b
 ollama run deepseek-r1:14b
+ollama run huihui_ai/qwen2.5-abliterate:7b
+ollama run huihui_ai/qwen2.5-abliterate:3b
+ollama run huihui_ai/qwen2.5-abliterate:14b
 无限制版本根据名字去下载
 """
 
@@ -48,4 +51,4 @@ ollama run deepseek-r1:14b
 
 
 #更新脚本库-百度百科
-#更新设定功能-不是微调,也不是Modelfile,只是固定的在用户对话下边拼接一段对话,可以用于简单的ai问答
+#更新设定功能-不是微调,也不是Modelfile,只是固定的在用户对话下边拼接一段对话,可以用于简单的ai问答,可以用于qwen模型3b以上，3b太蠢了
