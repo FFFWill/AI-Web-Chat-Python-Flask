@@ -18,7 +18,7 @@ import subprocess  # 子进程管理
 from datetime import datetime
 
 # 全局配置
-generation_stop_flag = False  # 生成中断标志位（线程安全）
+generation_stop_flag = False  # 生成中断标志位
 generation_lock = Lock()  # 用于保护共享资源的线程锁
 
 
@@ -35,7 +35,7 @@ class UTF8Handler(logging.FileHandler):
 app = Flask(__name__, template_folder='.')  # 设置模板目录为当前目录
 
 
-# 工具函数：获取本机IPv6地址
+# 获取本机IPv6地址
 def get_ipv6_address():
     """通过执行系统命令获取IPv6地址"""
     output = os.popen("ipconfig /all").read()  # Windows系统命令
@@ -43,7 +43,7 @@ def get_ipv6_address():
     return result[0][0] if result else None  # 返回第一个匹配结果或None
 
 
-# 工具函数：生成格式化时间字符串
+# 生成格式化时间字符串
 def get_time(fmt: str = '%Y年%m月%d日_%H时%M分%S秒') -> str:
     """生成指定格式的时间字符串"""
     ts = time.time()  # 获取时间戳
@@ -68,23 +68,32 @@ def chat_ollama(user_message, stream):
     host = 'http://localhost:11434'  # ollama默认服务地址
     cli = ollama.Client(host=host)  # 创建客户端实例
 
-    # 发送聊天请求（启用流式响应）
+    # 发送聊天请求(启用流式响应)
     response = cli.chat(
         model=modname,  # 使用全局配置的模型名称
         messages=[{'role': 'user', 'content': user_message}],  # 用户消息列表
-        stream=stream  # 启用流式模式（逐步返回生成内容）
+        stream=stream,  # 启用流式模式(逐步返回生成内容)
+        options=options
     )
     return response
 
 
 # 对话记录存储相关函数
 def save_chat_record(user_message, ai_response):
-    """保存完整对话记录到文件"""
+    """保存完整对话记录到文件（增加标记清理）"""
     os.makedirs('chatlist', exist_ok=True)  # 确保存储目录存在
     date_str = datetime.now().strftime("%Y%m%d")  # 生成日期字符串
     filename = os.path.join('chatlist', f"{date_str}.txt")  # 构建文件路径
 
-    # 清理AI响应中的思考标记（保留正式回复）
+    # 新增：清理用户消息中的特殊标记及其内容
+    cleaned_user_message = re.sub(
+        r'<#<#<.*?>#>#>',  # 非贪婪匹配特殊标记对
+        '',
+        user_message,
+        flags=re.DOTALL  # 使.匹配换行符
+    ).strip()
+
+    # 清理AI响应中的思考标记(保留正式回复)
     cleaned_response = re.sub(
         r'###正在思考###.*?###总结部分###',  # 非贪婪匹配思考部分
         '',
@@ -92,12 +101,11 @@ def save_chat_record(user_message, ai_response):
         flags=re.DOTALL  # 使.匹配换行符
     ).strip()
 
-    # 追加写入文件（UTF-8编码）
+    # 追加写入文件(UTF-8编码)
     with codecs.open(filename, 'a', encoding='utf-8') as f:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        record = f"[{timestamp}] 用户的问题: {user_message}\nAI回复: {cleaned_response}###RECORD_SEPARATOR###\n"
+        record = f"[{timestamp}] 用户的问题: {cleaned_user_message}\nAI回复: {cleaned_response}###RECORD_SEPARATOR###\n"
         f.write(record)
-
 
 def get_chat_records(date_str, num_records=5):
     """获取指定日期的最近N条对话记录"""
@@ -157,11 +165,11 @@ def find_best_matches(user_query):
         base_filename = os.path.splitext(filename)[0].lower()
         score = 0
 
-        # 计算字符匹配得分（每个字符出现次数*2）
+        # 计算字符匹配得分(每个字符出现次数*2)
         for char in query_chars:
             score += base_filename.count(char) * 2
 
-        # 计算单词匹配得分（每个单词长度*3）
+        # 计算单词匹配得分(每个单词长度*3)
         for word in user_query.lower().split():
             if word in base_filename:
                 score += len(word) * 3
@@ -254,7 +262,7 @@ def upload_image():
     upload_folder = 'image'
     os.makedirs(upload_folder, exist_ok=True)
 
-    # 生成唯一文件名（避免覆盖）
+    # 生成唯一文件名(避免覆盖)
     timestamp = get_time()
     original_extension = os.path.splitext(file.filename)[1]
     filename_base = f"{timestamp}{original_extension}"
@@ -273,6 +281,36 @@ def upload_image():
         app.logger.error(f"图片保存失败: {str(e)}")
         return {'error': '文件保存失败'}, 500
 
+# setting文件夹,读取设定文件夹中一个设定文件的内容后拼接用户问题
+@app.route('/api/list_settings', methods=['GET'])
+def list_settings():
+    """返回setting目录下的.txt文件列表"""
+    try:
+        folder_path = 'setting'
+        files = [f for f in os.listdir(folder_path) if f.endswith('.txt')]
+        return {'files': files}
+    except Exception as e:
+        app.logger.error(f"获取设置文件列表异常: {str(e)}")
+        return {'files': []}, 500
+
+@app.route('/api/get_setting_content', methods=['GET'])
+def get_setting_content():
+    """获取指定设置文件的内容"""
+    filename = request.args.get('file')
+    if not filename or not filename.endswith('.txt'):
+        return {'error': '无效的文件请求'}, 400
+
+    file_path = os.path.join('setting', filename)
+    if not os.path.exists(file_path):
+        return {'error': '文件不存在'}, 404
+
+    try:
+        with codecs.open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+        return {'content': content}
+    except Exception as e:
+        app.logger.error(f"读取设置文件失败: {str(e)}")
+        return {'error': '读取文件失败'}, 500
 
 # 主页路由
 @app.route('/')
@@ -332,14 +370,14 @@ def chat():
 
     full_history = "\n\n".join(history_parts) if history_parts else ""
 
-    # 添加函数执行结果（如果存在）
+    # 添加函数执行结果(如果存在)
     if 'currentFunc' in request.json and request.json['currentFunc']:
         func_result = request.json['currentFunc']
         full_content = f"{user_message}\n\n[函数执行结果]:\n{func_result}\n\n{full_history}"
     else:
         full_content = f"{user_message}\n\n{full_history}" if full_history else user_message
 
-    # 定义生成器函数（流式响应）
+    # 定义生成器函数(流式响应)
     def generate(content):
         global generation_stop_flag  # 声明使用全局变量
         try:
@@ -372,7 +410,7 @@ def chat():
                 full_response += content
 
             app.logger.info("流式处理完成")
-            # 保存完整对话记录（包含思考过程）
+            # 保存完整对话记录(包含思考过程)
             save_chat_record(user_message, full_response.strip())
         except GeneratorExit as e:
             app.logger.warning(f"流式处理中止: {str(e)}")
@@ -387,6 +425,15 @@ def chat():
 # 程序入口
 if __name__ == '__main__':
     threshold = 15  # 知识库匹配最低得分阈值
+
+    options = {
+        "temperature": 0.95,             # 控制生成文本的随机性,值越低越保守.更多地控制着模型输出的"冷静度"或"热情度",即输出的随机性程度.
+        #"max_tokens": 512,              # 限制生成文本的最大长度(token).
+        "top_p": 0.9,                   # top_p采样,模型会生成一组候选 token 然后从累积概率达到或超过'p'的 token 中随机选择一个作为输出.随机性,创造性.
+        "top_k": 10,                   # 从模型认为最可能的"k"个词中选择下一个词."k"值越大,选择范围越广,生成的文本越多样;"k"值越小,选择范围越窄,生成的文本越趋向于高概率的词.
+        # "presence penalty": 0,        # 0-1.5轻惩罚,2强惩罚,一种固定的惩罚,如果一个token已经在文本中出现过,就会受到惩罚.这会导致模型引入更多新的token/单词/短语,不会明显抑制常用词的重复.
+        # "frequency penalty": 0,       # 频率惩罚,让token每次在文本中出现都受到惩罚.这可以阻止重复使用相同的token/单词/短语,同时也会使模型讨论的主题更加多样化,更频繁地更换主题.
+    }
 
     # 获取IPv6地址并启动服务
     ipv6_address = get_ipv6_address()
