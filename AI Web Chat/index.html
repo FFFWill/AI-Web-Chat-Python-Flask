@@ -104,10 +104,12 @@
 
         .controls-container {
             display: flex;
-            gap: 10px;
+            gap: 6px;
             margin-top: 15px;
             flex-wrap: wrap;
+            height: 50px;
         }
+
 
         .control-btn {
             padding: 10px 20px;
@@ -120,6 +122,9 @@
             display: flex;
             align-items: center;
             gap: 5px;
+            width: 110px; /* 缩小按钮宽度 */
+            height: 50px; /* 缩小按钮高度 */
+            font-size: 10px; /* 缩小文字 */
         }
 
         .control-btn:hover {
@@ -159,9 +164,9 @@
 
         .config-menu {
             position: fixed;     /* 保持固定定位 */
-            bottom: calc(30% - 70px);  /* 相对于悬浮球位置调整 */
+            bottom: calc(10% - 70px);  /* 相对于悬浮球位置调整 */
             right: 20px;
-            transform: translateX(calc(-14% + 50px)); /* 水平偏移调整 */
+            transform: translateX(calc(-12% + 50px)); /* 水平偏移调整 */
             background: white;
             border-radius: 8px;
             padding: 15px;
@@ -169,7 +174,7 @@
             opacity: 0;
             visibility: hidden;
             transition: all 0.3s ease;
-            width: 350px;
+            width: 310px;
         }
 
         .config-menu.active {
@@ -274,6 +279,18 @@
         .config-menu .setting-group:nth-child(6) { /* 新增的第六个设置组 */
             margin-top: 15px;
         }
+        /* 在现有style标签中添加 */
+        #audio-player {
+            border: 2px solid var(--control-bg);
+            border-radius: 8px;
+            padding: 1px;
+            background: var(--bg-color);
+        }
+
+        #audio-player:focus {
+            outline: none;
+            box-shadow: 0 0 8px var(--primary-color);
+        }
     </style>
 </head>
 <body>
@@ -299,15 +316,15 @@
 
         <button class="control-btn" id="memory-toggle" onclick="toggleMemory()">
             <i>✉</i>
-            <span>短期记忆</span>
+            <span>记忆</span>
         </button>
         <button class="control-btn" id="database-toggle" onclick="toggleDatabase()">
             <i>💽</i>
-            <span>数据库检索</span>
+            <span>数据库</span>
         </button>
         <button class="control-btn" id="function-toggle" onclick="toggleFunction()">
             <i>ℱ</i>
-            <span>执行函数</span>
+            <span>执行</span>
         </button>
 
         <input type="file" id="image-upload" accept=".png,.jpg" style="display: none;">
@@ -316,6 +333,10 @@
             <span>上传图片</span>
         </button>
 
+        <button class="control-btn" id="tts-toggle" onclick="toggleTTS()">
+            <i>🗣️</i>
+            <span>语音</span>
+        </button>
     </div>
 
 
@@ -404,14 +425,24 @@
                 <option value="">请选择角色设定文件</option>
             </select>
         </div>
+
+        <div class="setting-group">
+            <label>音频控制：</label>
+            <audio controls id="audio-player" style="width: 100%; margin-top: 10px;">
+                <source src="/audio/1.wav" type="audio/wav">
+                您的浏览器不支持音频播放
+            </audio>
+        </div>
     </div>
 
     <script>
+        let useTTS = false; // 新增文本转语音状态变量
         let useFunction = false;
         let selectedFunction = '';
         let currentUpload = null;
         window.onload = function() {
             // 初始化按钮状态
+            document.getElementById('tts-toggle').classList.toggle('active', useTTS);
             document.getElementById('memory-toggle').classList.toggle('active', useMemory);
             document.getElementById('database-toggle').classList.toggle('active', useDatabase);
 
@@ -435,6 +466,15 @@
         };
         // 修改后的JavaScript部分
         let selectedSettingContent = ''; // 新增变量存储角色设定内容
+        // 新增文本转语音切换函数
+        function toggleTTS() {
+            useTTS = !useTTS;
+            document.getElementById('tts-toggle').classList.toggle('active', useTTS);
+
+            // 立即刷新音频（如果当前有更新）
+            checkAudioUpdate();
+        }
+
 
         // 新增加载角色设定文件列表函数
         async function loadSettings() {
@@ -756,7 +796,6 @@
             const responseContainer = await addAssistantMessageStream();
 
             try {
-                // 新增角色设定内容拼接逻辑
                 let fullMessage = content;
                 if (selectedSettingContent) {
                     fullMessage += '\n\n' + selectedSettingContent;
@@ -773,6 +812,7 @@
                     }
                 }
 
+                // 添加useTTS参数到请求
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -781,7 +821,8 @@
                         useMemory: useMemory,
                         useDatabase: useDatabase,
                         currentFunc: funcResult,
-                        settings: currentSettings
+                        settings: currentSettings,
+                        useTTS: useTTS // 新增参数
                     })
                 });
 
@@ -801,6 +842,34 @@
                 userInput.focus();
             }
         }
+        // 新增音频更新时间戳检查
+        let lastAudioTimestamp = 0;
+
+        function checkAudioUpdate() {
+            fetch('/api/get_audio_timestamp')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.timestamp > lastAudioTimestamp) {
+                        const audioPlayer = document.getElementById('audio-player');
+                        audioPlayer.src = '/audio/1.wav?' + Date.now();
+                        audioPlayer.load();
+                        lastAudioTimestamp = data.timestamp;
+                        console.log('音频控件已刷新');
+
+                        // 设置音频音量
+                        var audioElement = document.querySelector('audio');
+                        if (audioElement) {
+                            audioElement.volume = 0.05;
+                        }
+                    }
+                })
+                .catch(error => console.error('检查音频更新失败:', error));
+        }
+
+        // 启动定时器（每3秒检查一次）
+        setInterval(checkAudioUpdate, 3000);
+
+
         // 初始化时绑定新设置组的监听
         document.getElementById('max-func-length').addEventListener('change', updateSettings);
         document.getElementById('custom-max-func').addEventListener('input', updateSettings);
