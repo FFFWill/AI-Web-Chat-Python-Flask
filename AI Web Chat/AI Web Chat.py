@@ -6,16 +6,18 @@
 
 """
 Flask服务端程序，集成ollama大模型、知识库查询、函数执行、文件上传等功能
-支持流式响应、对话历史记录、生成中断等特性
+流式响应、对话历史记录、生成中断、首文本拼接（用于设定）、文本转语音。
 """
 
 # 导入必要库
-from flask import Flask, request, jsonify, Response, render_template  # Web框架相关
+from flask import Flask, request, jsonify, Response, render_template,send_file  # Web框架相关
 import ollama  # 大模型客户端库
 import os, re, time, datetime, codecs, logging  # 系统/工具库
 from threading import Lock  # 线程锁
 import subprocess  # 子进程管理
 from datetime import datetime
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
+from werkzeug.serving import run_simple
 
 # 全局配置
 generation_stop_flag = False  # 生成中断标志位
@@ -25,7 +27,6 @@ generation_lock = Lock()  # 用于保护共享资源的线程锁
 # 自定义UTF-8编码日志处理器
 class UTF8Handler(logging.FileHandler):
     """强制使用UTF-8编码写入日志文件，解决中文乱码问题"""
-
     def __init__(self, filename, mode='a', encoding=None, delay=False):
         super().__init__(filename, mode, encoding=encoding, delay=delay)
         self.stream = codecs.open(filename, mode, encoding='utf-8')  # 重写文件流编码
@@ -51,15 +52,30 @@ def get_time(fmt: str = '%Y年%m月%d日_%H时%M分%S秒') -> str:
     return time.strftime(fmt, ta)  # 格式化为字符串
 
 
+# 自定义日志过滤器函数
+def custom_log_filter(record):
+    """过滤掉特定API端点的访问日志"""
+    # 仅处理请求日志（如access logs）
+    if record.name == 'werkzeug':
+        # 解析日志消息，提取请求路径和方法
+        message = record.getMessage()
+        if "GET /api/get_audio_timestamp" in message:
+            return False  # 跳过记录
+    return True  # 其他日志正常记录
+
 # 配置日志系统
 logging.basicConfig(
-    level=logging.INFO,  # 设置最低日志级别
+    level=logging.WARNING,  # 设置最低日志级别level=logging.WARNING
     format='%(asctime)s - %(levelname)s - %(message)s',  # 日志格式
     handlers=[  # 多处理器配置
-        UTF8Handler('chat.log'),  # 写入chat.log文件
+        #UTF8Handler('chat.log'),  # 写入chat.log文件
         logging.StreamHandler()  # 同时输出到控制台
     ]
 )
+
+# 为Werkzeug日志添加自定义过滤器
+for handler in logging.root.handlers:
+    handler.addFilter(custom_log_filter)
 
 
 # 核心AI交互函数
@@ -211,6 +227,15 @@ def run_func():
     func_name = request.args.get('func')
     raw_input = request.args.get('raw_input', '')
 
+    # 新增：清理输入中的角色设定标记及其内容
+    cleaned_input = re.sub(
+        r'<#<#<.*?>#>#>',  # 非贪婪匹配特殊标记对
+        '',
+        raw_input,
+        flags=re.DOTALL  # 使.匹配换行符
+    ).strip()
+    app.logger.debug(f"清理前参数: {raw_input[:50]}...")  # 仅记录前50字符
+    app.logger.debug(f"清理后参数: {cleaned_input}")
     if not func_name or not func_name.endswith('.py'):
         return "无效的函数请求", 400
 
@@ -219,9 +244,9 @@ def run_func():
         return f"函数文件不存在: {func_path}", 404
 
     try:
-        # 执行子进程并捕获输出
+        # 执行子进程并捕获输出（使用清理后的输入）
         result = subprocess.run(
-            ['python', '-u', func_path, raw_input],
+            ['python', '-u', func_path, cleaned_input],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -312,6 +337,37 @@ def get_setting_content():
         app.logger.error(f"读取设置文件失败: {str(e)}")
         return {'error': '读取文件失败'}, 500
 
+@app.route('/audio/<filename>')
+def serve_audio(filename):
+    """提供音频文件下载"""
+    audio_folder = 'audio'
+    file_path = os.path.join(audio_folder, filename)
+    if not os.path.exists(file_path):
+        return f"音频文件 {filename} 不存在", 404
+    try:
+        return send_file(
+            file_path,
+            mimetype='audio/wav',
+            as_attachment=False
+        )
+    except Exception as e:
+        app.logger.error(f"提供音频文件失败: {str(e)}")
+        return str(e), 500
+
+
+@app.route('/api/get_audio_timestamp', methods=['GET'])
+def get_audio_timestamp():
+    """获取音频更新时间戳"""
+    if not os.path.exists('audio_timestamp.txt'):
+        return {'timestamp': 0}, 404
+
+    try:
+        with open('audio_timestamp.txt', 'r') as f:
+            return {'timestamp': float(f.read().strip())}
+    except Exception as e:
+        app.logger.error(f"读取时间戳失败: {str(e)}")
+        return {'timestamp': 0}, 500
+
 # 主页路由
 @app.route('/')
 def index():
@@ -347,6 +403,7 @@ def chat():
     re_max_listku = settings.get('re_max_listku', 150)  # 知识库内容截断长度
     max_func_length = settings.get('max_func_length', 150)  # 函数返回截断长度
     modname = settings.get('modname', 'deepseek-r1:8b')  # AI模型名称
+    use_tts = request.json.get('useTTS', False)  # 是否启用文本转语音
 
     # 构建历史记录上下文
     history_parts = []
@@ -412,6 +469,23 @@ def chat():
             app.logger.info("流式处理完成")
             # 保存完整对话记录(包含思考过程)
             save_chat_record(user_message, full_response.strip())
+
+            # 修改后的文本转语音执行逻辑
+            if use_tts:
+                app.logger.info("执行文本转语音脚本")
+                subprocess.run(
+                    ['python', "文本转语音.py"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8'
+                )
+                app.logger.info("文本转语音脚本执行完成")
+
+                # 更新音频时间戳
+                timestamp = time.time()
+                with open('audio_timestamp.txt', 'w') as f:
+                    f.write(f"{timestamp}")
         except GeneratorExit as e:
             app.logger.warning(f"流式处理中止: {str(e)}")
         except Exception as e:
